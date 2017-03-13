@@ -1,21 +1,21 @@
 # frozen_string_literal: true
+require 'securerandom'
+require 'savon'
+require 'excon'
 
-require "securerandom"
-require "savon"
-require "excon"
+require 'creditsafe/errors'
+require 'creditsafe/messages'
+require 'creditsafe/namespace'
 
-require "creditsafe/errors"
-require "creditsafe/messages"
-require "creditsafe/namespace"
+require 'creditsafe/request/company_report'
+require 'creditsafe/request/find_company'
+require 'creditsafe/request/get_portfolios'
 
-require "creditsafe/request/company_report"
-require "creditsafe/request/find_company"
-
-require "active_support/notifications"
+require 'active_support/notifications'
 
 module Creditsafe
   class Client
-    ENVIRONMENTS = %i[live test].freeze
+    ENVIRONMENTS = %i(live test).freeze
 
     def initialize(username: nil, password: nil, savon_opts: {},
                    environment: :live, log_level: :warn)
@@ -38,9 +38,9 @@ module Creditsafe
       response = invoke_soap(:find_companies, request.message)
 
       companies = response.
-        fetch(:find_companies_response).
-        fetch(:find_companies_result).
-        fetch(:companies)
+                  fetch(:find_companies_response).
+                  fetch(:find_companies_result).
+                  fetch(:companies)
 
       companies.nil? ? nil : companies.fetch(:company)
     end
@@ -57,6 +57,20 @@ module Creditsafe
         fetch(:report)
     end
 
+    def get_portfolios(portfolio_ids)
+      request = Creditsafe::Request::GetPortfolios.new(portfolio_ids)
+      response = invoke_soap(:get_portfolios, request.message)
+
+      binding.pry
+
+      portfolios = response.
+        fetch(:get_portfolios_response).
+        fetch(:get_portfolios_result).
+        fetch(:portfolios)
+      
+        portfolios.nil? ? nil : portfolios.fetch(:portfolio)
+    end
+
     def inspect
       "#<#{self.class} @username='#{@username}'>"
     end
@@ -65,10 +79,11 @@ module Creditsafe
 
     def handle_message_for_response(response)
       [
-        *response.xpath("//q1:Message"),
-        *response.xpath("//xmlns:Message"),
+        *response.xpath('//q1:Message'),
+        *response.xpath('//xmlns:Message')
       ].each do |message|
-        api_message = Creditsafe::Messages.for_code(message.attributes["Code"].value)
+        api_message = Creditsafe::Messages.
+                      for_code(message.attributes['Code'].value)
 
         api_error_message = api_message.message
         api_error_message += " (#{message.text})" unless message.text.blank?
@@ -77,9 +92,6 @@ module Creditsafe
       end
     end
 
-    # rubocop:disable Style/RescueStandardError
-    # rubocop:disable Metrics/MethodLength
-    # rubocop:disable Metrics/AbcSize
     def invoke_soap(message_type, message)
       started = Time.now
       notification_payload = { request: message }
@@ -87,12 +99,6 @@ module Creditsafe
       response = client.call(message_type, message: message)
       handle_message_for_response(response)
       notification_payload[:response] = response.body
-    rescue Excon::Errors::Timeout => raw_error
-      notification_payload[:error] = handle_error(raw_error)
-      raise TimeoutError
-    rescue Excon::Errors::BadGateway => raw_error
-      notification_payload[:error] = handle_error(raw_error)
-      raise BadGatewayError
     rescue => raw_error
       processed_error = handle_error(raw_error)
       notification_payload[:error] = processed_error
@@ -101,9 +107,6 @@ module Creditsafe
       publish("creditsafe.#{message_type}", started, Time.now,
               SecureRandom.hex(10), notification_payload)
     end
-    # rubocop:enable Metrics/AbcSize
-    # rubocop:enable Metrics/MethodLength
-    # rubocop:enable Style/RescueStandardError
 
     def publish(*args)
       ActiveSupport::Notifications.publish(*args)
@@ -111,38 +114,33 @@ module Creditsafe
 
     # There's a potential bug in the creditsafe API where they actually return
     # an HTTP 401 if you're unauthorized, hence the sad special case below
-    #
-    # rubocop:disable Metrics/MethodLength
     def handle_error(error)
       case error
       when Savon::SOAPFault
         return UnknownApiError.new(error.message)
       when Savon::HTTPError
         if error.to_hash[:code] == 401
-          return AccountError.new("Unauthorized: invalid credentials")
+          return AccountError.new('Unauthorized: invalid credentials')
         end
-
         return UnknownApiError.new(error.message)
       when Excon::Errors::Error
         return HttpError.new("Error making HTTP request: #{error.message}")
       end
       error
     end
-    # rubocop:enable Metrics/MethodLength
 
     def client
       @client ||= build_savon_client
     end
 
     def auth_header
-      auth_value = "Basic " + Base64.encode64("#{@username}:#{@password}").chomp
-      { "Authorization" => auth_value }
+      auth_value = 'Basic ' + Base64.encode64("#{@username}:#{@password}").chomp
+      { 'Authorization' => auth_value }
     end
 
-    # rubocop:disable Metrics/MethodLength
     def build_savon_client
       options = {
-        env_namespace: "soapenv",
+        env_namespace: 'soapenv',
         namespace_identifier: Creditsafe::Namespace::OPER,
         namespaces: Creditsafe::Namespace::ALL,
         wsdl: wsdl_path,
@@ -151,15 +149,14 @@ module Creditsafe
         adapter: :excon,
         log: true,
         log_level: @log_level,
-        pretty_print_xml: true,
+        pretty_print_xml: true
       }
       Savon.client(options.merge(@savon_opts))
     end
-    # rubocop:enable Metrics/MethodLength
 
     def wsdl_path
-      root_dir = File.join(File.dirname(__FILE__), "..", "..")
-      File.join(root_dir, "data", "creditsafe-#{@environment}.xml")
+      root_dir = File.join(File.dirname(__FILE__), '..', '..')
+      File.join(root_dir, 'data', "creditsafe-#{@environment}.xml")
     end
   end
 end
