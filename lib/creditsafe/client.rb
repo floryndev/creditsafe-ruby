@@ -134,8 +134,13 @@ module Creditsafe
 
       result = response.
         fetch(:list_monitored_companies_response).
-        fetch(:list_monitored_companies_result).
-        fetch(:portfolios)
+        fetch(:list_monitored_companies_result)
+
+      begin
+        result = result.fetch(:portfolios)
+      rescue
+        raise '' + result.fetch(:messages).fetch(:message)
+      end
 
       result
     end
